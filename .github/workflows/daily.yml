@@ -1,0 +1,66 @@
+name: 타이어옥션 매일 자동 홍보
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # 매일 10:00 KST (UTC 01:00). GitHub 사정으로 수~수십 분 지연될 수 있음
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "생성만 하고 업로드하지 않기"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # state 커밋 + media 브랜치 업로드
+
+concurrency:
+  group: daily-post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/cache@v4
+        with:
+          path: assets/fonts
+          key: fonts-pretendard-1.3.9
+
+      - run: pip install -r requirements.txt
+
+      - name: 생성 및 업로드
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python main.py ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: 결과물 보관 (Actions 탭에서 다운로드 가능, 14일)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-${{ github.run_id }}
+          path: |
+            out/*/
+            !out/_cache/
+          retention-days: 14
+
+      - name: 게시 이력 커밋
+        if: always() && !inputs.dry_run
+        run: |
+          git config user.name "tireauction-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state/
+          git diff --cached --quiet || (git commit -m "state: $(date -u +%F) 게시 기록" && git push)
